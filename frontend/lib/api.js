@@ -65,23 +65,30 @@ API.interceptors.response.use(
   }
 );
 
-// Auth
+// Login user
 export const loginUser = (email, password) => {
   return API.post("/auth/signin/", { email, password });
 };
 
+// Signup user
 export const signupUser = (email, username, password) => {
   return API.post("/auth/signup/", { email, username, password });
 };
 
-// Protected: Image upload and detect objects
-export const uploadAndDetect = (formData) => {
-  return API.post("/detect/upload/", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+// Get full chat history
+export const getChatHistory = () => {
+  return API.get("/chat/history/");
 };
 
-// ask gemini
-export const askGemini = (image_id, question) => {
-  return API.post("/qa/", { image_id, question });
+// Send message (text + optional image)
+export const sendChatMessage = (text, imageFile) => {
+  const formData = new FormData();
+  if (text) formData.append("text", text);
+  if (imageFile) formData.append("image", imageFile);
+
+  return API.post("/chat/send/", formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
 };

@@ -1,51 +1,64 @@
-from django.shortcuts import render
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
 
-from chat.models import ChatMessage, ChatSession
-from chat.serializers import ChatMessageSerializer, CreateMessageSerializer
-from chat.utils import build_message_payload, call_gpt_4o
+from services.history_builder import build_conversation_history
+from services.openai_service import call_gpt4o
+from chat.models import ChatMessage
+from chat.serializers import ChatMessageSerializer
 
-
-class SendMessageView(APIView):
+# Chat View
+# =====================
+class MultimodalChatView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request):
-        serializer = CreateMessageSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        text = request.data.get("text")
+        image = request.data.get("image")
 
-        session_id = serializer.validated_data["session_id"]
-        content = serializer.validated_data.get("content")
-        image = serializer.validated_data.get("image")
+        if not text and not image:
+            return Response({"error": "Provide text or image"}, status=400)
 
-        session = get_object_or_404(ChatSession, id=session_id)
-
-        # 1️⃣ Save user message
+        # Save user message
         user_msg = ChatMessage.objects.create(
-            session=session,
-            sender="user",
-            content=content,
+            user=request.user,
+            role="user",
+            text=text,
             image=image
         )
 
-        # 2️⃣ Build chat history for GPT
-        history = session.chat_messages.all()
-        messages_payload = build_message_payload(history)
-
-        # 3️⃣ Call GPT-4o
-        bot_reply = call_gpt_4o(messages_payload)
-
-        # 4️⃣ Save bot message
-        bot_msg = ChatMessage.objects.create(
-            session=session,
-            sender="bot",
-            content=bot_reply
+        # Build full conversation history
+        conversation_messages = build_conversation_history(
+            user=request.user,
+            ChatMessage=ChatMessage
         )
 
-        # 5️⃣ Return bot reply
+        # Send to LLM
+        assistant_reply = call_gpt4o(conversation_messages)
+
+        # Save assistant message
+        assistant_msg = ChatMessage.objects.create(
+            user=request.user,
+            role="assistant",
+            text=assistant_reply
+        )
+
         return Response({
             "user_message": ChatMessageSerializer(user_msg).data,
-            "bot_message": ChatMessageSerializer(bot_msg).data
-        }, status=status.HTTP_200_OK)
+            "assistant_message": ChatMessageSerializer(assistant_msg).data
+        })
+        
+        
+# Chat History View
+# =======================
+class ChatHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        messages = ChatMessage.objects.filter(user=request.user).order_by('created_at')
+        serializer = ChatMessageSerializer(messages, many=True)
+        return Response(serializer.data)
